@@ -830,7 +830,6 @@ fn load_cert_into_root_store(ctx: &mut MESALINK_CTX, path: &path::Path) -> Mesal
 /// int SSL_CTX_use_certificate_chain_file(SSL_CTX *ctx, const char *file);
 /// ```
 #[no_mangle]
-#[cfg(feature = "server_apis")]
 pub extern "C" fn mesalink_SSL_CTX_use_certificate_chain_file(
     ctx_ptr: *mut MESALINK_CTX_ARC,
     filename_ptr: *const c_char,
@@ -842,7 +841,6 @@ pub extern "C" fn mesalink_SSL_CTX_use_certificate_chain_file(
     )
 }
 
-#[cfg(feature = "server_apis")]
 fn inner_mesalink_ssl_ctx_use_certificate_chain_file(
     ctx_ptr: *mut MESALINK_CTX_ARC,
     filename_ptr: *const c_char,
@@ -878,6 +876,91 @@ fn inner_mesalink_ssl_ctx_use_certificate_chain_file(
     Ok(SSL_SUCCESS)
 }
 
+/// `SSL_CTX_use_certificate_ASN1` - load the ASN1 encoded certificate
+/// into ssl_ctx.
+///
+/// ```c
+/// #include <mesalink/openssl/ssl.h>
+///
+/// int SSL_CTX_use_certificate_ASN1(SSL_CTX *ctx, int len, unsigned char *d);
+/// ```
+#[no_mangle]
+pub extern "C" fn mesalink_SSL_CTX_use_certificate_ASN1(
+    ctx_ptr: *mut MESALINK_CTX_ARC,
+    len: c_int,
+    d: *mut c_uchar,
+) -> c_int {
+    check_inner_result!(
+        inner_mesalink_ssl_ctx_use_certificate_asn1(ctx_ptr, len, d),
+        SSL_FAILURE
+    )
+}
+
+fn inner_mesalink_ssl_ctx_use_certificate_asn1(
+    ctx_ptr: *mut MESALINK_CTX_ARC,
+    len: c_int,
+    d: *mut c_uchar,
+) -> MesalinkInnerResult<c_int> {
+    if d.is_null() {
+        return Err(error!(MesalinkBuiltinError::NullPointer.into()));
+    }
+    let ctx = sanitize_ptr_for_mut_ref(ctx_ptr)?;
+    let buf: &[u8] = unsafe { slice::from_raw_parts_mut(d, len as usize) };
+    let cert = rustls::Certificate(buf.to_vec());
+    let ctx_mut_ref = util::get_context_mut(ctx);
+    if ctx_mut_ref.certificates.is_none() {
+        ctx_mut_ref.certificates = Some(vec![]);
+    }
+    ctx_mut_ref.certificates.as_mut().unwrap().push(cert);
+    if let (Some(certs), Some(priv_key)) = (
+        ctx_mut_ref.certificates.as_ref(),
+        ctx_mut_ref.private_key.as_ref(),
+    ) {
+        ctx_mut_ref
+            .client_config
+            .set_single_client_cert(certs.clone(), priv_key.clone());
+        ctx_mut_ref
+            .server_config
+            .set_single_cert(certs.clone(), priv_key.clone())
+            .map_err(|e| error!(e.into()))?;
+    }
+    Ok(SSL_SUCCESS)
+}
+
+/// `SSL_use_certificate_ASN1` - load the ASN1 encoded certificate
+/// into ssl.
+///
+/// ```c
+/// #include <mesalink/openssl/ssl.h>
+///
+/// int SSL_use_certificate_ASN1(SSL *ssl, unsigned char *d, int len);
+/// ```
+#[no_mangle]
+pub extern "C" fn mesalink_SSL_use_certificate_ASN1(
+    ssl_ptr: *mut MESALINK_SSL,
+    d: *mut c_uchar,
+    len: c_int,
+) -> c_int {
+    check_inner_result!(
+        inner_mesalink_ssl_use_certificate_asn1(ssl_ptr, d, len),
+        SSL_FAILURE
+    )
+}
+
+fn inner_mesalink_ssl_use_certificate_asn1(
+    ssl_ptr: *mut MESALINK_SSL,
+    d: *mut c_uchar,
+    len: c_int,
+) -> MesalinkInnerResult<c_int> {
+    let ssl = sanitize_ptr_for_ref(ssl_ptr)?;
+    let ctx = ssl
+        .context
+        .as_ref()
+        .ok_or(error!(MesalinkBuiltinError::BadFuncArg.into()))?;
+    let ctx_ptr = ctx as *const MESALINK_CTX_ARC as *mut MESALINK_CTX_ARC;
+    inner_mesalink_ssl_ctx_use_certificate_asn1(ctx_ptr, len, d)
+}
+
 /// `SSL_CTX_use_PrivateKey_file` - add the first private key found in file to
 /// ctx. The formatting type of the certificate must be specified from the known
 /// types SSL_FILETYPE_PEM and SSL_FILETYPE_ASN1.
@@ -888,7 +971,6 @@ fn inner_mesalink_ssl_ctx_use_certificate_chain_file(
 /// int SSL_CTX_use_PrivateKey_file(SSL_CTX *ctx, const char *file, int type);
 /// ```
 #[no_mangle]
-#[cfg(feature = "server_apis")]
 pub extern "C" fn mesalink_SSL_CTX_use_PrivateKey_file(
     ctx_ptr: *mut MESALINK_CTX_ARC,
     filename_ptr: *const c_char,
@@ -900,7 +982,6 @@ pub extern "C" fn mesalink_SSL_CTX_use_PrivateKey_file(
     )
 }
 
-#[cfg(feature = "server_apis")]
 fn inner_mesalink_ssl_ctx_use_privatekey_file(
     ctx_ptr: *mut MESALINK_CTX_ARC,
     filename_ptr: *const c_char,
@@ -942,6 +1023,90 @@ fn inner_mesalink_ssl_ctx_use_privatekey_file(
     Ok(SSL_SUCCESS)
 }
 
+/// `SSL_CTX_use_PrivateKey_ASN1` - load the ASN1 encoded certificate into
+/// ssl_ctx.
+///
+/// ```c
+/// #include <mesalink/openssl/ssl.h>
+///
+/// int SSL_CTX_use_PrivateKey_ASN1(int pk, SSL_CTX *ctx, unsigned char *d,
+///                               long len);
+/// ```
+#[no_mangle]
+pub extern "C" fn mesalink_SSL_CTX_use_PrivateKey_ASN1(
+    pk_type: c_int,
+    ctx_ptr: *mut MESALINK_CTX_ARC,
+    d: *mut c_uchar,
+    len: c_long,
+) -> c_int {
+    check_inner_result!(
+        inner_mesalink_ssl_ctx_use_privatekey_asn1(pk_type, ctx_ptr, d, len),
+        SSL_FAILURE
+    )
+}
+
+fn inner_mesalink_ssl_ctx_use_privatekey_asn1(
+    _pk_type: c_int,
+    ctx_ptr: *mut MESALINK_CTX_ARC,
+    d: *mut c_uchar,
+    len: c_long,
+) -> MesalinkInnerResult<c_int> {
+    if d.is_null() {
+        return Err(error!(MesalinkBuiltinError::NullPointer.into()));
+    }
+    let ctx = sanitize_ptr_for_mut_ref(ctx_ptr)?;
+    let buf: &[u8] = unsafe { slice::from_raw_parts_mut(d, len as usize) };
+    let pkey = rustls::PrivateKey(buf.to_vec());
+    util::get_context_mut(ctx).private_key = Some(pkey);
+    if let Ok((certs, priv_key)) = util::try_get_context_certs_and_key(ctx) {
+        util::get_context_mut(ctx)
+            .client_config
+            .set_single_client_cert(certs.clone(), priv_key.clone());
+        util::get_context_mut(ctx)
+            .server_config
+            .set_single_cert(certs.clone(), priv_key.clone())
+            .map_err(|e| error!(e.into()))?;
+    }
+    Ok(SSL_SUCCESS)
+}
+
+/// `SSL_use_PrivateKey_ASN1` - load the ASN1 encoded certificate into
+/// ssl.
+///
+/// ```c
+/// #include <mesalink/openssl/ssl.h>
+///
+/// int SSL_use_PrivateKey_ASN1(int pk, SSL_CTX *ctx, unsigned char *d,
+///                             long len);
+/// ```
+#[no_mangle]
+pub extern "C" fn mesalink_SSL_use_PrivateKey_ASN1(
+    pk_type: c_int,
+    ssl_ptr: *mut MESALINK_SSL,
+    d: *mut c_uchar,
+    len: c_long,
+) -> c_int {
+    check_inner_result!(
+        inner_mesalink_ssl_use_privatekey_asn1(pk_type, ssl_ptr, d, len),
+        SSL_FAILURE
+    )
+}
+
+fn inner_mesalink_ssl_use_privatekey_asn1(
+    pk_type: c_int,
+    ssl_ptr: *mut MESALINK_SSL,
+    d: *mut c_uchar,
+    len: c_long,
+) -> MesalinkInnerResult<c_int> {
+    let ssl = sanitize_ptr_for_ref(ssl_ptr)?;
+    let ctx = ssl
+        .context
+        .as_ref()
+        .ok_or(error!(MesalinkBuiltinError::BadFuncArg.into()))?;
+    let ctx_ptr = ctx as *const MESALINK_CTX_ARC as *mut MESALINK_CTX_ARC;
+    inner_mesalink_ssl_ctx_use_privatekey_asn1(pk_type, ctx_ptr, d, len)
+}
+
 /// `SSL_CTX_check_private_key` - check the consistency of a private key with the
 /// corresponding certificate loaded into ctx
 ///
@@ -951,7 +1116,6 @@ fn inner_mesalink_ssl_ctx_use_privatekey_file(
 /// int SSL_CTX_check_private_key(const SSL_CTX *ctx);
 /// ```
 #[no_mangle]
-#[cfg(feature = "server_apis")]
 pub extern "C" fn mesalink_SSL_CTX_check_private_key(ctx_ptr: *mut MESALINK_CTX_ARC) -> c_int {
     check_inner_result!(
         inner_mesalink_ssl_ctx_check_private_key(ctx_ptr),
@@ -959,7 +1123,6 @@ pub extern "C" fn mesalink_SSL_CTX_check_private_key(ctx_ptr: *mut MESALINK_CTX_
     )
 }
 
-#[cfg(feature = "server_apis")]
 fn inner_mesalink_ssl_ctx_check_private_key(
     ctx_ptr: *mut MESALINK_CTX_ARC,
 ) -> MesalinkInnerResult<c_int> {
@@ -976,6 +1139,29 @@ fn inner_mesalink_ssl_ctx_check_private_key(
         }
         _ => Err(error!(MesalinkBuiltinError::BadFuncArg.into())),
     }
+}
+
+/// `SSL_check_private_key` - check the consistency of a private key with the
+/// corresponding certificate loaded into ssl
+///
+/// ```c
+/// #include <mesalink/openssl/ssl.h>
+///
+/// int SSL_check_private_key(const SSL *ssl);
+/// ```
+#[no_mangle]
+pub extern "C" fn mesalink_SSL_check_private_key(ctx_ptr: *mut MESALINK_SSL) -> c_int {
+    check_inner_result!(inner_mesalink_ssl_check_private_key(ctx_ptr), SSL_FAILURE)
+}
+
+fn inner_mesalink_ssl_check_private_key(ssl_ptr: *mut MESALINK_SSL) -> MesalinkInnerResult<c_int> {
+    let ssl = sanitize_ptr_for_ref(ssl_ptr)?;
+    let ctx = ssl
+        .context
+        .as_ref()
+        .ok_or(error!(MesalinkBuiltinError::BadFuncArg.into()))?;
+    let ctx_ptr = ctx as *const MESALINK_CTX_ARC as *mut MESALINK_CTX_ARC;
+    inner_mesalink_ssl_ctx_check_private_key(ctx_ptr)
 }
 
 #[doc(hidden)]
