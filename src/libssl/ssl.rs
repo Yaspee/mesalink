@@ -960,7 +960,9 @@ fn inner_mesalink_ssl_use_certificate_asn1(
         .as_ref()
         .ok_or(error!(MesalinkBuiltinError::BadFuncArg.into()))?;
     let ctx_ptr = ctx as *const MESALINK_CTX_ARC as *mut MESALINK_CTX_ARC;
-    inner_mesalink_ssl_ctx_use_certificate_asn1(ctx_ptr, len, d)
+    let _ = inner_mesalink_ssl_ctx_use_certificate_asn1(ctx_ptr, len, d)?;
+    let _ = inner_mesalink_ssl_set_ssl_ctx(ssl_ptr, ctx_ptr)?;
+    Ok(SSL_SUCCESS)
 }
 
 /// `SSL_CTX_use_PrivateKey_file` - add the first private key found in file to
@@ -1106,7 +1108,9 @@ fn inner_mesalink_ssl_use_privatekey_asn1(
         .as_ref()
         .ok_or(error!(MesalinkBuiltinError::BadFuncArg.into()))?;
     let ctx_ptr = ctx as *const MESALINK_CTX_ARC as *mut MESALINK_CTX_ARC;
-    inner_mesalink_ssl_ctx_use_privatekey_asn1(pk_type, ctx_ptr, d, len)
+    let _ = inner_mesalink_ssl_ctx_use_privatekey_asn1(pk_type, ctx_ptr, d, len)?;
+    let _ = inner_mesalink_ssl_set_ssl_ctx(ssl_ptr, ctx_ptr)?;
+    Ok(SSL_SUCCESS)
 }
 
 /// `SSL_CTX_check_private_key` - check the consistency of a private key with the
@@ -3121,5 +3125,67 @@ mod tests {
             mesalink_SSL_write_early_data(ssl, buf.as_ptr() as *const c_uchar, 10, wr_len_ptr)
         );
         let _ = unsafe { Box::from_raw(wr_len_ptr) };
+    }
+
+    #[test]
+    fn test_client_auth() {
+        const HTTP_REQUEST: &[u8; 93] = b"GET / HTTP/1.1\r\n\
+            Host: ota.oss.mosiliang.top\r\n\
+            Connection: close\r\n\
+            Accept-Encoding: identity\r\n\
+            \r\n";
+        let certificate_bytes = include_bytes!("../../tests/mosiliang.cert.der");
+        let private_key_bytes = include_bytes!("../../tests/mosiliang.key.der");
+        let method = mesalink_TLSv1_2_client_method();
+        let ctx = mesalink_SSL_CTX_new(method);
+        let ssl = mesalink_SSL_new(ctx);
+        assert_ne!(ssl, ptr::null_mut(), "SSL is null");
+        assert_eq!(
+            SSL_SUCCESS,
+            mesalink_SSL_set_tlsext_host_name(
+                ssl,
+                b"ota.oss.mosiliang.top\0".as_ptr() as *const c_char
+            ),
+            "Failed to set SNI"
+        );
+        assert_eq!(
+            SSL_SUCCESS,
+            mesalink_SSL_use_certificate_ASN1(
+                ssl,
+                certificate_bytes.as_ptr() as *mut c_uchar,
+                certificate_bytes.len() as c_int,
+            )
+        );
+        assert_eq!(
+            SSL_SUCCESS,
+            mesalink_SSL_use_PrivateKey_ASN1(
+                0,
+                ssl,
+                private_key_bytes.as_ptr() as *mut c_uchar,
+                private_key_bytes.len() as c_long,
+            )
+        );
+        let sock = net::TcpStream::connect("ota.oss.mosiliang.top:443").expect("Failed to connect");
+        assert_eq!(SSL_SUCCESS, mesalink_SSL_set_fd(ssl, sock.as_raw_fd()),);
+
+        if SSL_SUCCESS != mesalink_SSL_connect(ssl) {
+            let error = mesalink_SSL_get_error(ssl, -1);
+            panic!("Connect error: 0x{:X}\n", error);
+        }
+        assert_ne!(
+            SSL_FAILURE,
+            mesalink_SSL_write(ssl, HTTP_REQUEST.as_ptr() as *const c_uchar, 93)
+        );
+        let mut buf = [0u8; 2048];
+        loop {
+            let rd_len =
+                mesalink_SSL_read(ssl, buf.as_mut_ptr() as *mut c_uchar, buf.len() as c_int);
+            println!("Read {} bytes", rd_len);
+            if rd_len <= 0 {
+                break;
+            }
+        }
+        mesalink_SSL_free(ssl);
+        mesalink_SSL_CTX_free(ctx);
     }
 }
