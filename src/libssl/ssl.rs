@@ -818,6 +818,46 @@ fn load_cert_into_root_store(ctx: &mut MESALINK_CTX, path: &path::Path) -> Mesal
     Ok(())
 }
 
+/// `SSL_CTX_load_CA_certificate_ASN1` - load the ASN1 encoded certificate into
+/// ctx.
+///
+/// ```c
+/// #include <mesalink/openssl/ssl.h>
+///
+/// int SSL_CTX_add_ca_certificate_ASN1(SSL_CTX *CTX, unsigned char *d, int len);
+/// ```
+#[no_mangle]
+pub extern "C" fn mesalink_SSL_CTX_load_CA_certificate_ASN1(
+    ctx_ptr: *mut MESALINK_CTX_ARC,
+    d: *mut c_uchar,
+    len: c_int,
+) -> c_int {
+    check_inner_result!(
+        inner_mesalink_ssl_ctx_load_ca_certificate_asn1(ctx_ptr, d, len),
+        SSL_FAILURE
+    )
+}
+
+fn inner_mesalink_ssl_ctx_load_ca_certificate_asn1(
+    ctx_ptr: *mut MESALINK_CTX_ARC,
+    d: *mut c_uchar,
+    len: c_int,
+) -> MesalinkInnerResult<c_int> {
+    if d.is_null() {
+        return Err(error!(MesalinkBuiltinError::NullPointer.into()));
+    }
+    let ctx = sanitize_ptr_for_mut_ref(ctx_ptr)?;
+    let buf: &[u8] = unsafe { slice::from_raw_parts_mut(d, len as usize) };
+    let cert = rustls::Certificate(buf.to_vec());
+    let ctx_mut_ref = util::get_context_mut(ctx);
+    ctx_mut_ref
+        .ca_roots
+        .add(&cert)
+        .map_err(|_| error!(MesalinkBuiltinError::BadFuncArg.into()))?;
+    ctx_mut_ref.client_config.root_store = ctx_mut_ref.ca_roots.clone();
+    Ok(SSL_SUCCESS)
+}
+
 /// `SSL_CTX_use_certificate_chain_file` - load a certificate chain from file into
 /// ctx. The certificates must be in PEM format and must be sorted starting with
 /// the subject's certificate (actual client or server certificate), followed by
@@ -2694,6 +2734,25 @@ mod tests {
                 ctx_ptr,
                 ptr::null(),
                 b"tests/root_store\0".as_ptr() as *const c_char,
+            )
+        );
+        mesalink_SSL_CTX_free(ctx_ptr);
+    }
+
+    #[test]
+    fn load_ca_asn1() {
+        let ctx_ptr = mesalink_SSL_CTX_new(mesalink_TLS_client_method());
+        assert_eq!(
+            SSL_FAILURE,
+            mesalink_SSL_CTX_load_CA_certificate_ASN1(ctx_ptr, ptr::null_mut(), 0)
+        );
+        let ca_cert_bytes = include_bytes!("../../tests/root_store/curl-root-ca.crt.der");
+        assert_eq!(
+            SSL_SUCCESS,
+            mesalink_SSL_CTX_load_CA_certificate_ASN1(
+                ctx_ptr,
+                ca_cert_bytes.as_ptr() as *mut c_uchar,
+                ca_cert_bytes.len() as c_int
             )
         );
         mesalink_SSL_CTX_free(ctx_ptr);

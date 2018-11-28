@@ -90,6 +90,7 @@ typedef MESALINK_SSL SSL;
 
 #define SSL_CTX_new mesalink_SSL_CTX_new
 #define SSL_CTX_load_verify_locations mesalink_SSL_CTX_load_verify_locations
+#define SSL_CTX_load_CA_certificate_ASN1 mesalink_SSL_CTX_load_CA_certificate_ASN1
 #define SSL_CTX_use_certificate_chain_file                                    \
   mesalink_SSL_CTX_use_certificate_chain_file
 #define SSL_CTX_use_certificate_ASN1 mesalink_SSL_CTX_use_certificate_ASN1
